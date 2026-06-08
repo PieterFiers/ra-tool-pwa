@@ -1,0 +1,394 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="RA Tool">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0f2a4a">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="apple-touch-icon" sizes="180x180" href="icons/icon-192.png">
+<title>RA Tool — ISO 12100</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- SCREEN: Home -->
+<div id="screen-home" class="screen active">
+  <div class="app-header">
+    <div class="app-logo">
+      <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+        <rect width="28" height="28" rx="7" fill="#185FA5"/>
+        <path d="M7 21V14l5-5 4 4 5-6v13H7z" fill="white" opacity="0.9"/>
+        <circle cx="20" cy="9" r="2" fill="#4db8ff"/>
+      </svg>
+      <span>RA Tool</span>
+    </div>
+    <span class="version-badge">ISO 12100</span>
+  </div>
+
+  <div class="home-content">
+    <div class="section-label">Actieve projecten</div>
+    <div id="project-list" class="project-list"></div>
+    <button class="fab-button" id="btn-new-project">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M10 4v12M4 10h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      Nieuw project
+    </button>
+  </div>
+
+  <div id="modal-new-project" class="modal-overlay hidden">
+    <div class="modal-sheet">
+      <div class="modal-handle"></div>
+      <h2 class="modal-title">Nieuw project</h2>
+      <div class="field-group">
+        <label class="field-label">Projectnaam *</label>
+        <input id="new-proj-naam" type="text" class="field-input" placeholder="bv. Warehouse BDMlaan">
+      </div>
+      <div class="field-group">
+        <label class="field-label">Locatie</label>
+        <input id="new-proj-loc" type="text" class="field-input" placeholder="bv. Zeebrugge">
+      </div>
+      <div class="field-group">
+        <label class="field-label">Opdrachtgever</label>
+        <input id="new-proj-klant" type="text" class="field-input" placeholder="bv. Agristo">
+      </div>
+      <div class="field-group">
+        <label class="field-label">Datum</label>
+        <input id="new-proj-datum" type="date" class="field-input">
+      </div>
+      <div class="modal-actions">
+        <button class="btn-secondary" id="btn-cancel-project">Annuleren</button>
+        <button class="btn-primary" id="btn-create-project">Aanmaken</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- SCREEN: Project detail -->
+<div id="screen-project" class="screen">
+  <div class="nav-bar">
+    <button class="nav-back" id="btn-back-home">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M12 4L6 10l6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <div class="nav-title" id="nav-project-naam">Project</div>
+    <button class="nav-action" id="btn-export-project" title="Exporteer naar Excel">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M10 3v10M6 9l4 4 4-4M4 15h12" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+  </div>
+
+  <div class="project-stats" id="project-stats"></div>
+  <div id="gevaren-list" class="gevaren-list" style="flex:1;overflow-y:auto;-webkit-overflow-scrolling:touch;padding-bottom:8px;"></div>
+
+  <div class="empty-project hidden" id="empty-project">
+    <svg width="48" height="48" viewBox="0 0 48 48" fill="none"><rect x="8" y="8" width="32" height="32" rx="8" stroke="#b0b0b0" stroke-width="2"/><path d="M24 16v16M16 24h16" stroke="#b0b0b0" stroke-width="2" stroke-linecap="round"/></svg>
+    <p>Nog geen gevaren geregistreerd</p>
+    <span>Tik op de knop onderaan om te beginnen</span>
+  </div>
+
+  <div style="padding:12px 16px calc(var(--safe-bottom) + 12px);background:var(--bg-card);border-top:1px solid var(--border);flex-shrink:0;">
+    <button class="proj-action-btn primary" id="btn-add-gevaar" style="width:100%;justify-content:center;gap:8px;padding:14px;">
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M9 3v12M3 9h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      Nieuw gevaar registreren
+    </button>
+  </div>
+</div>
+
+<!-- SCREEN: Gevaar invoer -->
+<div id="screen-gevaar" class="screen">
+  <div class="nav-bar">
+    <button class="nav-back" id="btn-back-project">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M12 4L6 10l6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <div class="nav-title" id="nav-gevaar-title">Nieuw gevaar</div>
+    <div class="step-indicator" id="step-indicator">1/4</div>
+  </div>
+
+  <div class="wizard-progress">
+    <div class="wizard-bar" id="wizard-bar"></div>
+  </div>
+
+  <!-- STAP 1: Foto + locatie -->
+  <div class="wizard-step active" id="step-1">
+    <div class="step-header">
+      <div class="step-number">01</div>
+      <div>
+        <div class="step-title">Foto & locatie</div>
+        <div class="step-sub">Documenteer het gevaar visueel</div>
+      </div>
+    </div>
+
+    <div class="camera-zone" id="camera-zone">
+      <div class="camera-placeholder" id="camera-placeholder">
+        <svg width="40" height="40" viewBox="0 0 40 40" fill="none"><circle cx="20" cy="20" r="19" stroke="#c0c0c0" stroke-width="1.5"/><path d="M12 16h2l2-2h8l2 2h2a2 2 0 012 2v8a2 2 0 01-2 2H12a2 2 0 01-2-2v-8a2 2 0 012-2z" stroke="#c0c0c0" stroke-width="1.5"/><circle cx="20" cy="22" r="3" stroke="#c0c0c0" stroke-width="1.5"/></svg>
+        <p>Tik om foto te nemen</p>
+      </div>
+      <div class="photo-grid" id="photo-grid"></div>
+      <div class="camera-actions">
+        <label class="camera-btn camera-btn-primary" for="input-camera">
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M5 7h1l1-1h4l1 1h1a1 1 0 011 1v5a1 1 0 01-1 1H5a1 1 0 01-1-1V8a1 1 0 011-1z" stroke="currentColor" stroke-width="1.5"/><circle cx="9" cy="10.5" r="1.5" stroke="currentColor" stroke-width="1.5"/></svg>
+          Camera
+          <input type="file" id="input-camera" accept="image/*" capture="environment" multiple style="display:none">
+        </label>
+        <label class="camera-btn camera-btn-secondary" for="input-gallery">
+          <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><rect x="2" y="4" width="14" height="10" rx="2" stroke="currentColor" stroke-width="1.5"/><path d="M2 11l4-3 3 3 2-2 5 4" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/></svg>
+          Gallerij
+          <input type="file" id="input-gallery" accept="image/*" multiple style="display:none">
+        </label>
+      </div>
+    </div>
+
+    <div class="fields-section">
+      <div class="field-group">
+        <label class="field-label">Locatie / zone *</label>
+        <input id="f1-locatie" type="text" class="field-input" placeholder="bv. Inbound highbay, lijn 3">
+      </div>
+      <div class="field-group">
+        <label class="field-label">Scenario (Annex B)</label>
+        <textarea id="f1-scenario" class="field-input field-textarea" placeholder="Beschrijf het gevaarlijke scenario..."></textarea>
+      </div>
+      <div class="field-group">
+        <label class="field-label">Gebruiksfase</label>
+        <div class="fase-strip" id="fase-strip"></div>
+        <input id="f1-gebruiksfase" type="hidden">
+      </div>
+      <div class="field-group">
+        <label class="field-label">Gebruikers</label>
+        <input id="f1-gebruikers" type="text" class="field-input" placeholder="Operators, onderhoudspersoneel">
+      </div>
+      <div class="field-row">
+        <div class="field-group">
+          <label class="field-label">Norm</label>
+          <input id="f1-norm" type="text" class="field-input" value="EN ISO 12100">
+        </div>
+        <div class="field-group">
+          <label class="field-label">Verantwoordelijke</label>
+          <input id="f1-verantw" type="text" class="field-input" placeholder="bv. ECS">
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- STAP 2: Gevaar classificatie -->
+  <div class="wizard-step" id="step-2">
+    <div class="step-header">
+      <div class="step-number">02</div>
+      <div>
+        <div class="step-title">Gevaar classificatie</div>
+        <div class="step-sub">Soort, oorzaak, gevolg en consequenties</div>
+      </div>
+    </div>
+    <div class="fields-section">
+      <div class="field-group">
+        <label class="field-label">Soort gevaar *</label>
+        <div class="custom-select-wrap">
+          <select id="f2-soort" class="field-select"><option value="">— selecteer categorie —</option></select>
+        </div>
+      </div>
+      <div class="field-group">
+        <label class="field-label">Oorzaak *</label>
+        <div class="custom-select-wrap">
+          <select id="f2-oorzaak" class="field-select" disabled><option value="">— kies eerst soort gevaar —</option></select>
+        </div>
+      </div>
+      <div class="field-group">
+        <label class="field-label">Gevolgen *</label>
+        <div class="custom-select-wrap">
+          <select id="f2-gevolg" class="field-select" disabled><option value="">— kies eerst soort gevaar —</option></select>
+        </div>
+      </div>
+      <div class="field-group">
+        <label class="field-label">Consequenties (letseltype)</label>
+        <input id="f2-consequenties" type="text" class="field-input" placeholder="bv. Breuken lichaamsdelen, snijwonden">
+      </div>
+      <div class="field-group">
+        <label class="field-label">Aanvullende omschrijving</label>
+        <textarea id="f2-extra" class="field-input field-textarea" placeholder="Extra toelichting..."></textarea>
+      </div>
+    </div>
+  </div>
+
+  <!-- STAP 3: Risico evaluatie -->
+  <div class="wizard-step" id="step-3">
+    <div class="step-header">
+      <div class="step-number">03</div>
+      <div>
+        <div class="step-title">Risico evaluatie</div>
+        <div class="step-sub">Voor en na maatregel (E × B × W)</div>
+      </div>
+    </div>
+    <div class="fields-section">
+      <div class="risk-block risk-block-before">
+        <div class="risk-block-label">Voor maatregel</div>
+        <div class="field-group">
+          <label class="field-label">E – Ernst van het letsel</label>
+          <div class="custom-select-wrap">
+            <select id="f3-E" class="field-select">
+              <option value="">—</option>
+              <option value="1">1 – Gering (EHBO, geen verzuim)</option>
+              <option value="3">3 – Belangrijk (letsel + verzuim)</option>
+              <option value="7">7 – Ernstig (irreversibel, breuk)</option>
+              <option value="15">15 – Zeer ernstig (1 dode)</option>
+              <option value="40">40 – Ramp (meerdere doden)</option>
+              <option value="100">100 – Catastrofaal</option>
+            </select>
+          </div>
+        </div>
+        <div class="field-group">
+          <label class="field-label">B – Blootstellingsfrequentie</label>
+          <div class="custom-select-wrap">
+            <select id="f3-B" class="field-select">
+              <option value="">—</option>
+              <option value="1">1 – Zelden (&lt; 1×/jaar)</option>
+              <option value="2">2 – Maandelijks</option>
+              <option value="3">3 – Wekelijks</option>
+              <option value="6">6 – Dagelijks</option>
+              <option value="10">10 – Constant</option>
+            </select>
+          </div>
+        </div>
+        <div class="field-group">
+          <label class="field-label">W – Waarschijnlijkheid</label>
+          <div class="custom-select-wrap">
+            <select id="f3-W" class="field-select">
+              <option value="">—</option>
+              <option value="0.033">0.033 – Bijna nooit</option>
+              <option value="0.1">0.1 – Onwaarschijnlijk</option>
+              <option value="0.2">0.2 – Mogelijk</option>
+              <option value="1">1 – Waarschijnlijk</option>
+              <option value="3">3 – Verwacht</option>
+              <option value="6">6 – Zeker</option>
+            </select>
+          </div>
+        </div>
+        <div class="risk-result" id="risk-result-1">
+          <div class="risk-result-label">Risico R = E × B × W</div>
+          <div class="risk-result-value" id="r1-val">–</div>
+          <div class="risk-result-tag" id="r1-tag"></div>
+        </div>
+      </div>
+
+      <div class="field-group">
+        <label class="field-label">Risicoreductiemaatregel</label>
+        <textarea id="f3-maatregel" class="field-input field-textarea" rows="4" placeholder="Beschrijf de maatregel conform de preventiehiërarchie (EN ISO 12100)..."></textarea>
+      </div>
+
+      <div class="risk-block risk-block-after">
+        <div class="risk-block-label">Na maatregel</div>
+        <div class="field-group">
+          <label class="field-label">E2 – Ernst</label>
+          <div class="custom-select-wrap">
+            <select id="f3-E2" class="field-select">
+              <option value="">—</option>
+              <option value="1">1 – Gering</option>
+              <option value="3">3 – Belangrijk</option>
+              <option value="7">7 – Ernstig</option>
+              <option value="15">15 – Zeer ernstig</option>
+              <option value="40">40 – Ramp</option>
+              <option value="100">100 – Catastrofaal</option>
+            </select>
+          </div>
+        </div>
+        <div class="field-group">
+          <label class="field-label">B2 – Blootstelling</label>
+          <div class="custom-select-wrap">
+            <select id="f3-B2" class="field-select">
+              <option value="">—</option>
+              <option value="1">1 – Zelden</option>
+              <option value="2">2 – Maandelijks</option>
+              <option value="3">3 – Wekelijks</option>
+              <option value="6">6 – Dagelijks</option>
+              <option value="10">10 – Constant</option>
+            </select>
+          </div>
+        </div>
+        <div class="field-group">
+          <label class="field-label">W2 – Waarschijnlijkheid</label>
+          <div class="custom-select-wrap">
+            <select id="f3-W2" class="field-select">
+              <option value="">—</option>
+              <option value="0.033">0.033 – Bijna nooit</option>
+              <option value="0.1">0.1 – Onwaarschijnlijk</option>
+              <option value="0.2">0.2 – Mogelijk</option>
+              <option value="1">1 – Waarschijnlijk</option>
+              <option value="3">3 – Verwacht</option>
+              <option value="6">6 – Zeker</option>
+            </select>
+          </div>
+        </div>
+        <div class="risk-result risk-result-after" id="risk-result-2">
+          <div class="risk-result-label">Residueel risico R2 = E2 × B2 × W2</div>
+          <div class="risk-result-value" id="r2-val">–</div>
+          <div class="risk-result-tag" id="r2-tag"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- STAP 4: Afsluiting -->
+  <div class="wizard-step" id="step-4">
+    <div class="step-header">
+      <div class="step-number">04</div>
+      <div>
+        <div class="step-title">Afsluiting</div>
+        <div class="step-sub">Restrisico en PLr</div>
+      </div>
+    </div>
+    <div class="fields-section">
+      <div class="field-group">
+        <label class="field-label">Restrisico na aanbevolen reductie</label>
+        <div class="custom-select-wrap">
+          <select id="f4-restrisico" class="field-select">
+            <option value="">—</option>
+            <option value="Neen">Neen</option>
+            <option value="Ja, aanvaardbaar">Ja, aanvaardbaar</option>
+            <option value="Ja, conform wetgeving">Ja, conform wetgeving</option>
+            <option value="Ja, miniem (geen afwezigheid)">Ja, miniem (geen afwezigheid)</option>
+          </select>
+        </div>
+      </div>
+      <div class="field-group">
+        <label class="field-label">PLr (EN ISO 13849-1)</label>
+        <div class="custom-select-wrap">
+          <select id="f4-plr" class="field-select">
+            <option value="NA">NA – Niet van toepassing</option>
+            <option value="nvt">nvt</option>
+            <option value="PLa">PLa</option>
+            <option value="PLb">PLb</option>
+            <option value="PLc (LS)">PLc – Lichtscherm</option>
+            <option value="PLc (NS_panel)">PLc – Noodstop paneel</option>
+            <option value="PLd">PLd</option>
+            <option value="PLe">PLe</option>
+          </select>
+        </div>
+      </div>
+      <div class="field-group">
+        <label class="field-label">PLr parameters (Annex A EN ISO 13849-1)</label>
+        <input id="f4-plrparams" type="text" class="field-input" placeholder="bv. S2/F1/P1">
+      </div>
+      <div class="summary-card" id="gevaar-summary">
+        <div class="summary-title">Samenvatting</div>
+        <div id="summary-content"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="wizard-nav">
+    <button class="wizard-btn-prev" id="wizard-prev" disabled>
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M11 4L6 9l5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Vorige
+    </button>
+    <button class="wizard-btn-next" id="wizard-next">
+      Volgende
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M7 4l5 5-5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

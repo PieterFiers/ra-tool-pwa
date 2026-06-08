@@ -1,0 +1,26 @@
+{
+  "name": "RA Tool — ISO 12100",
+  "short_name": "RA Tool",
+  "description": "Risico-analyse tool conform EN ISO 12100 voor veiligheidsingenieurs",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#0f2a4a",
+  "theme_color": "#0f2a4a",
+  "lang": "nl",
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "categories": ["productivity", "utilities"]
+}
