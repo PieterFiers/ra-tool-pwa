@@ -487,7 +487,9 @@ function exportProject() {
 
   const headers = [
     null, 'Nr', 'Norm', 'Datum laatste aanpassing', 'Locatie',
-    'Scenario (volgens Annex B)', 'Gebruiksfase', 'Consequenties',
+    'Scenario (volgens Annex B)',
+    'Soort gevaar (Annex B)', 'Oorzaak', 'Gevolg',
+    'Gebruiksfase', 'Consequenties',
     'E', 'B', 'W', 'R',
     'Beschrijving risico-reducerende maatregel',
     'E2', 'B2', 'W2', 'R2',
@@ -510,8 +512,11 @@ function exportProject() {
       proj.datum || today(),
       g.locatie || '',
       g.scenario || '',
+      g.soortGevaar || '',
+      g.oorzaak || '',
+      g.gevolg || '',
       g.gebruiksfase || '',
-      g.consequenties || g.gevolg || '',
+      g.consequenties || '',
       g.E ? parseFloat(g.E) : null,
       g.B ? parseFloat(g.B) : null,
       g.W ? parseFloat(g.W) : null,
@@ -531,7 +536,9 @@ function exportProject() {
   const wsRA = XLSX.utils.aoa_to_sheet(rows);
   wsRA['!cols'] = [
     {wch:3},{wch:5},{wch:20},{wch:14},{wch:30},
-    {wch:55},{wch:28},{wch:30},
+    {wch:55},
+    {wch:28},{wch:35},{wch:28},
+    {wch:28},{wch:30},
     {wch:5},{wch:5},{wch:5},{wch:7},
     {wch:60},
     {wch:5},{wch:5},{wch:5},{wch:7},
@@ -593,6 +600,59 @@ function initNewProjectModal() {
   document.getElementById('modal-new-project').classList.remove('hidden');
 }
 
+// ─── SYNC: KOPIEER / IMPORTEER ────────────────────────────────────────────────
+function openSyncExport() {
+  const data = JSON.stringify(projects);
+  document.getElementById('sync-export-text').value = data;
+  document.getElementById('sync-export-content').classList.remove('hidden');
+  document.getElementById('sync-import-content').classList.add('hidden');
+  document.getElementById('sync-modal-title').textContent = 'Kopieer naar PC';
+  document.getElementById('modal-sync').classList.remove('hidden');
+  // Selecteer automatisch de tekst
+  setTimeout(() => {
+    const ta = document.getElementById('sync-export-text');
+    ta.focus();
+    ta.select();
+  }, 100);
+}
+
+function openSyncImport() {
+  document.getElementById('sync-import-text').value = '';
+  document.getElementById('sync-export-content').classList.add('hidden');
+  document.getElementById('sync-import-content').classList.remove('hidden');
+  document.getElementById('sync-modal-title').textContent = 'Importeer van iPhone';
+  document.getElementById('modal-sync').classList.remove('hidden');
+}
+
+function doImport() {
+  const raw = document.getElementById('sync-import-text').value.trim();
+  if (!raw) return;
+  let imported;
+  try {
+    imported = JSON.parse(raw);
+  } catch {
+    alert('Ongeldige data — controleer of je de volledige tekst hebt geplakt.');
+    return;
+  }
+  if (!Array.isArray(imported)) {
+    alert('Onverwacht formaat.');
+    return;
+  }
+  // Voeg toe, sla bestaande IDs over
+  const existingIds = new Set(projects.map(p => p.id));
+  let nieuw = 0;
+  imported.forEach(p => {
+    if (!existingIds.has(p.id)) {
+      projects.push(p);
+      nieuw++;
+    }
+  });
+  saveProjects();
+  renderHome();
+  document.getElementById('modal-sync').classList.add('hidden');
+  alert(`${nieuw} nieuw project${nieuw !== 1 ? 'en' : ''} geïmporteerd${imported.length - nieuw > 0 ? ` (${imported.length - nieuw} al aanwezig overgeslagen)` : ''}.`);
+}
+
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   renderHome();
@@ -621,6 +681,28 @@ document.addEventListener('DOMContentLoaded', () => {
     openProject();
     ['new-proj-naam','new-proj-loc','new-proj-klant'].forEach(id => document.getElementById(id).value = '');
   });
+
+  // Sync knoppen
+  document.getElementById('btn-export-all').addEventListener('click', openSyncExport);
+  document.getElementById('btn-import-all').addEventListener('click', openSyncImport);
+  document.getElementById('btn-close-sync').addEventListener('click', () => {
+    document.getElementById('modal-sync').classList.add('hidden');
+  });
+  document.getElementById('btn-copy-sync').addEventListener('click', () => {
+    const ta = document.getElementById('sync-export-text');
+    ta.select();
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(ta.value).then(() => {
+        document.getElementById('btn-copy-sync').textContent = '✓ Gekopieerd!';
+        setTimeout(() => { document.getElementById('btn-copy-sync').textContent = 'Kopieer naar klembord'; }, 2000);
+      });
+    } else {
+      document.execCommand('copy');
+      document.getElementById('btn-copy-sync').textContent = '✓ Gekopieerd!';
+      setTimeout(() => { document.getElementById('btn-copy-sync').textContent = 'Kopieer naar klembord'; }, 2000);
+    }
+  });
+  document.getElementById('btn-do-import').addEventListener('click', doImport);
 
   document.getElementById('btn-back-home').addEventListener('click', () => {
     showScreen('screen-home');

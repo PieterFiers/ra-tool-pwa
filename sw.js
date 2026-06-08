@@ -1,5 +1,5 @@
 // RA Tool Service Worker v2 — offline cache
-const CACHE = 'ra-tool-v2';
+const CACHE = 'ra-tool-v3';
 const ASSETS = [
   './',
   './index.html',

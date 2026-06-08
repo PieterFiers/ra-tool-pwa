@@ -37,6 +37,39 @@
       <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M10 4v12M4 10h12" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
       Nieuw project
     </button>
+    <div style="display:flex;gap:10px;margin-top:12px;">
+      <button class="proj-action-btn" id="btn-export-all" style="flex:1;padding:12px 8px;font-size:12px;">
+        <svg width="15" height="15" viewBox="0 0 15 15" fill="none"><path d="M7.5 2v8M4 7l3.5 3.5L11 7M2 12h11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Kopieer naar PC
+      </button>
+      <button class="proj-action-btn" id="btn-import-all" style="flex:1;padding:12px 8px;font-size:12px;">
+        <svg width="15" height="15" viewBox="0 0 15 15" fill="none"><path d="M7.5 13V5M4 8l3.5-3.5L11 8M2 2h11" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Importeer van PC
+      </button>
+    </div>
+  </div>
+
+  <!-- Sync modal -->
+  <div id="modal-sync" class="modal-overlay hidden">
+    <div class="modal-sheet">
+      <div class="modal-handle"></div>
+      <h2 class="modal-title" id="sync-modal-title">Data kopiëren</h2>
+      <div id="sync-export-content">
+        <p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px;">Kopieer de tekst hieronder en plak hem in de app op je PC via "Importeer van PC".</p>
+        <textarea id="sync-export-text" readonly style="width:100%;height:120px;background:var(--bg-input);border:1px solid var(--border-strong);border-radius:var(--radius-md);padding:10px;font-size:11px;font-family:monospace;color:var(--text-primary);resize:none;-webkit-user-select:all;user-select:all;"></textarea>
+        <button class="btn-primary" id="btn-copy-sync" style="width:100%;margin-top:10px;padding:13px;">
+          Kopieer naar klembord
+        </button>
+      </div>
+      <div id="sync-import-content" class="hidden">
+        <p style="font-size:13px;color:var(--text-secondary);margin-bottom:12px;">Plak hier de gekopieerde tekst van je iPhone.</p>
+        <textarea id="sync-import-text" style="width:100%;height:120px;background:var(--bg-input);border:1px solid var(--border-strong);border-radius:var(--radius-md);padding:10px;font-size:11px;font-family:monospace;color:var(--text-primary);resize:none;" placeholder="Plak hier..."></textarea>
+        <button class="btn-primary" id="btn-do-import" style="width:100%;margin-top:10px;padding:13px;background:#16a34a;">
+          Importeer projecten
+        </button>
+      </div>
+      <button class="btn-secondary" id="btn-close-sync" style="width:100%;margin-top:8px;padding:13px;">Sluiten</button>
+    </div>
   </div>
 
   <div id="modal-new-project" class="modal-overlay hidden">
