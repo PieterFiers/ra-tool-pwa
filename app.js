@@ -494,12 +494,16 @@ function exportProject() {
     'Verantwoordelijke',
     'Restrisico\naanwezig na aanbevolen reductie weg te nemen met instructie',
     'PLr\nvolgens\nEN13849-1',
-    'Parameters PLr\nvolgens\nEN13849-1'
+    'Parameters PLr\nvolgens\nEN13849-1',
+    "Foto's"
   ];
   const rows = [headers];
   (proj.gevaren || []).forEach((g, i) => {
     const r1 = riskScore(g.E, g.B, g.W);
     const r2 = riskScore(g.E2, g.B2, g.W2);
+    const fotoTekst = (g.photos && g.photos.length > 0)
+      ? g.photos.map((_, fi) => `foto_${i+1}_${fi+1}.jpg`).join(', ')
+      : '';
     rows.push([
       null, i + 1,
       g.norm || 'EN ISO 12100',
@@ -520,7 +524,8 @@ function exportProject() {
       g.verantwoordelijke || '',
       g.restrisico || '',
       g.plr || 'NA',
-      g.plrParams || ''
+      g.plrParams || '',
+      fotoTekst
     ]);
   });
   const wsRA = XLSX.utils.aoa_to_sheet(rows);
@@ -530,12 +535,56 @@ function exportProject() {
     {wch:5},{wch:5},{wch:5},{wch:7},
     {wch:60},
     {wch:5},{wch:5},{wch:5},{wch:7},
-    {wch:18},{wch:28},{wch:12},{wch:18}
+    {wch:18},{wch:28},{wch:12},{wch:18},{wch:30}
   ];
   XLSX.utils.book_append_sheet(wb, wsRA, `RA ${proj.naam}`.slice(0, 31));
 
   const fname = `RA_${proj.naam}_${proj.datum || today()}.xlsx`.replace(/[^a-zA-Z0-9_\-\.]/g, '_');
   XLSX.writeFile(wb, fname);
+
+  // Als er foto's zijn: ook een zip downloaden
+  const heeftFotos = (proj.gevaren || []).some(g => g.photos && g.photos.length > 0);
+  if (heeftFotos) {
+    setTimeout(() => exportFotos(proj), 500);
+  }
+}
+
+// Download alle foto's als zip
+async function exportFotos(proj) {
+  if (!window.JSZip) {
+    // Laad JSZip on-demand
+    await new Promise((resolve, reject) => {
+      const s = document.createElement('script');
+      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+      s.onload = resolve;
+      s.onerror = reject;
+      document.head.appendChild(s);
+    });
+  }
+
+  const zip = new JSZip();
+  const folder = zip.folder('fotos');
+
+  (proj.gevaren || []).forEach((g, i) => {
+    if (!g.photos || g.photos.length === 0) return;
+    g.photos.forEach((p, fi) => {
+      // dataUrl = "data:image/jpeg;base64,XXXX..."
+      const base64 = p.dataUrl.split(',')[1];
+      const ext = p.dataUrl.includes('png') ? 'png' : 'jpg';
+      const nr = String(i + 1).padStart(2, '0');
+      const fnr = String(fi + 1).padStart(2, '0');
+      const locatie = (g.locatie || '').replace(/[^a-zA-Z0-9]/g, '_').slice(0, 20);
+      folder.file(`gevaar_${nr}_foto_${fnr}_${locatie}.${ext}`, base64, { base64: true });
+    });
+  });
+
+  const blob = await zip.generateAsync({ type: 'blob' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `Fotos_${proj.naam}_${proj.datum || today()}.zip`.replace(/[^a-zA-Z0-9_\-\.]/g, '_');
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
 // ─── NEW PROJECT ──────────────────────────────────────────────────────────────
