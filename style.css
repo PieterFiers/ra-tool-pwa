@@ -101,6 +101,16 @@ html, body {
   border-radius: 99px;
   color: rgba(255,255,255,0.85);
 }
+.header-badges {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.build-badge {
+  border: none;
+  font-family: inherit;
+  cursor: pointer;
+}
 
 /* NAV BAR */
 .nav-bar {

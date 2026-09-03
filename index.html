@@ -27,7 +27,10 @@
       </svg>
       <span>RA Tool</span>
     </div>
-    <span class="version-badge">ISO 12100</span>
+    <div class="header-badges">
+      <span class="version-badge">ISO 12100</span>
+      <button type="button" class="version-badge build-badge" id="btn-open-diag" title="Diagnose">–</button>
+    </div>
   </div>
 
   <div class="home-content">
@@ -418,6 +421,20 @@
       <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M7 4l5 5-5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </button>
   </div>
+</div>
+
+<!-- SCREEN: Diagnose -->
+<div id="screen-diag" class="screen">
+  <div class="nav-bar">
+    <button class="nav-back" id="btn-back-diag">
+      <svg width="20" height="20" viewBox="0 0 20 20" fill="none"><path d="M12 4L6 10l6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+    <div class="nav-title">Diagnose</div>
+    <button class="nav-action" id="btn-refresh-diag" title="Vernieuwen">
+      <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M15 9a6 6 0 10-1.76 4.24M15 9V4m0 5h-5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+    </button>
+  </div>
+  <div class="home-content" id="diag-content"></div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>

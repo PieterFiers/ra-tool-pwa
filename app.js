@@ -1,5 +1,7 @@
 // RA Tool PWA v2 — app.js (offline, geen AI)
 
+const BUILD = 'v5-2026-09-03';
+
 // ─── State ───────────────────────────────────────────────────────────────────
 let projects = JSON.parse(localStorage.getItem('ra_projects') || '[]');
 let currentProjectId = null;
@@ -51,6 +53,83 @@ function setVal(id, val) {
   const el = document.getElementById(id);
   if (el && val !== undefined && val !== null) el.value = val;
 }
+
+// ─── INDEXEDDB (foutlog nu, fotoblobs vanaf de opslagfix) ────────────────────
+const IDB_NAME = 'ra-tool-db';
+const IDB_VERSION = 1;
+const IDB_STORE_PHOTOS = 'photos';
+const IDB_STORE_ERRORS = 'errors';
+const ERROR_LOG_MAX = 5;
+
+function idbOpen() {
+  return new Promise((resolve, reject) => {
+    if (!('indexedDB' in window)) { reject(new Error('IndexedDB niet beschikbaar')); return; }
+    const req = indexedDB.open(IDB_NAME, IDB_VERSION);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(IDB_STORE_PHOTOS)) db.createObjectStore(IDB_STORE_PHOTOS);
+      if (!db.objectStoreNames.contains(IDB_STORE_ERRORS)) db.createObjectStore(IDB_STORE_ERRORS, { keyPath: 'id', autoIncrement: true });
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+function idbCount(storeName) {
+  return idbOpen().then(db => new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, 'readonly');
+    const req = tx.objectStore(storeName).count();
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  })).catch(() => 0);
+}
+
+function trimErrorLog(db) {
+  return new Promise((resolve) => {
+    const tx = db.transaction(IDB_STORE_ERRORS, 'readwrite');
+    const store = tx.objectStore(IDB_STORE_ERRORS);
+    const req = store.getAllKeys();
+    req.onsuccess = () => {
+      const overflow = req.result.length - ERROR_LOG_MAX;
+      if (overflow > 0) req.result.slice(0, overflow).forEach(k => store.delete(k));
+    };
+    tx.oncomplete = resolve;
+    tx.onerror = () => resolve();
+  });
+}
+
+async function logError(message) {
+  try {
+    const db = await idbOpen();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(IDB_STORE_ERRORS, 'readwrite');
+      tx.objectStore(IDB_STORE_ERRORS).add({ message: String(message).slice(0, 500), time: new Date().toISOString() });
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+    await trimErrorLog(db);
+  } catch (e) {
+    // best effort — een foutlogger mag zelf nooit een fout gooien
+  }
+}
+
+function getLastErrors() {
+  return idbOpen().then(db => new Promise((resolve, reject) => {
+    const tx = db.transaction(IDB_STORE_ERRORS, 'readonly');
+    const req = tx.objectStore(IDB_STORE_ERRORS).getAll();
+    req.onsuccess = () => resolve(req.result.slice(-ERROR_LOG_MAX).reverse());
+    req.onerror = () => reject(req.error);
+  })).catch(() => []);
+}
+
+// ─── GLOBALE FOUTAFVANGING ─────────────────────────────────────────────────────
+window.addEventListener('error', (e) => {
+  logError(e.error ? (e.error.stack || e.error.message) : e.message);
+});
+window.addEventListener('unhandledrejection', (e) => {
+  const r = e.reason;
+  logError(r && r.stack ? r.stack : (r && r.message ? r.message : String(r)));
+});
 
 // ─── Screen navigation ───────────────────────────────────────────────────────
 function showScreen(id) {
@@ -653,9 +732,101 @@ function doImport() {
   alert(`${nieuw} nieuw project${nieuw !== 1 ? 'en' : ''} geïmporteerd${imported.length - nieuw > 0 ? ` (${imported.length - nieuw} al aanwezig overgeslagen)` : ''}.`);
 }
 
+// ─── DIAGNOSESCHERM ───────────────────────────────────────────────────────────
+function fmtKB(bytes) {
+  return (bytes / 1024).toFixed(1);
+}
+
+function localStorageUsageBytes() {
+  let total = 0;
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    const val = localStorage.getItem(key) || '';
+    total += (key.length + val.length) * 2; // UTF-16, benadering
+  }
+  return total;
+}
+
+async function renderDiag() {
+  const el = document.getElementById('diag-content');
+  el.innerHTML = `<div class="summary-card"><div class="summary-title">Bezig met laden…</div></div>`;
+
+  let cacheNaam = 'caches API niet beschikbaar';
+  if ('caches' in window) {
+    try {
+      const keys = await caches.keys();
+      cacheNaam = keys.length ? keys.join(', ') : '(geen cache actief)';
+    } catch (e) { cacheNaam = 'fout bij ophalen'; }
+  }
+
+  const lsBytes = localStorageUsageBytes();
+  const lsKB = fmtKB(lsBytes);
+  const lsPct = ((lsBytes / (5 * 1024 * 1024)) * 100).toFixed(1);
+
+  let estimateHtml = 'niet beschikbaar op dit toestel';
+  if (navigator.storage && navigator.storage.estimate) {
+    try {
+      const est = await navigator.storage.estimate();
+      estimateHtml = `${fmtKB(est.usage || 0)} kB gebruikt van ${fmtKB(est.quota || 0)} kB quotum`;
+    } catch (e) { estimateHtml = 'fout bij opvragen'; }
+  }
+
+  let persistHtml = 'niet beschikbaar op dit toestel';
+  if (navigator.storage && navigator.storage.persist) {
+    try {
+      const wasPersisted = navigator.storage.persisted ? await navigator.storage.persisted() : null;
+      const persistResult = await navigator.storage.persist();
+      persistHtml = `persist(): ${persistResult ? 'toegekend' : 'geweigerd'}` +
+        (wasPersisted !== null ? ` · persisted(): ${wasPersisted ? 'ja' : 'nee'}` : '');
+    } catch (e) { persistHtml = 'fout bij opvragen'; }
+  }
+
+  const aantalProjecten = projects.length;
+  const aantalGevaren = projects.reduce((sum, p) => sum + (p.gevaren || []).length, 0);
+  const aantalFotoblobs = await idbCount(IDB_STORE_PHOTOS);
+  const laatsteFouten = await getLastErrors();
+  const foutenHtml = laatsteFouten.length
+    ? laatsteFouten.map(f => `<div class="summary-row"><span class="summary-key">${esc(new Date(f.time).toLocaleString('nl-BE'))}</span><span class="summary-val">${esc(f.message)}</span></div>`).join('')
+    : `<div class="summary-row"><span class="summary-val">Geen fouten geregistreerd</span></div>`;
+
+  el.innerHTML = `
+    <div class="summary-card" style="margin-bottom:12px;">
+      <div class="summary-title">Versie</div>
+      <div class="summary-row"><span class="summary-key">Build</span><span class="summary-val">${esc(BUILD)}</span></div>
+      <div class="summary-row"><span class="summary-key">Actieve cache</span><span class="summary-val">${esc(cacheNaam)}</span></div>
+    </div>
+    <div class="summary-card" style="margin-bottom:12px;">
+      <div class="summary-title">Opslag</div>
+      <div class="summary-row"><span class="summary-key">localStorage</span><span class="summary-val">${lsKB} kB (${lsPct}% van 5 MB)</span></div>
+      <div class="summary-row"><span class="summary-key">storage.estimate()</span><span class="summary-val">${estimateHtml}</span></div>
+      <div class="summary-row"><span class="summary-key">Persistente opslag</span><span class="summary-val">${persistHtml}</span></div>
+    </div>
+    <div class="summary-card" style="margin-bottom:12px;">
+      <div class="summary-title">Data</div>
+      <div class="summary-row"><span class="summary-key">Projecten</span><span class="summary-val">${aantalProjecten}</span></div>
+      <div class="summary-row"><span class="summary-key">Gevaren</span><span class="summary-val">${aantalGevaren}</span></div>
+      <div class="summary-row"><span class="summary-key">Fotoblobs (IndexedDB)</span><span class="summary-val">${aantalFotoblobs}</span></div>
+    </div>
+    <div class="summary-card">
+      <div class="summary-title">Laatste 5 fouten</div>
+      ${foutenHtml}
+    </div>
+  `;
+}
+
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   renderHome();
+  document.getElementById('btn-open-diag').textContent = BUILD;
+
+  document.getElementById('btn-open-diag').addEventListener('click', () => {
+    showScreen('screen-diag');
+    renderDiag();
+  });
+  document.getElementById('btn-back-diag').addEventListener('click', () => {
+    showScreen('screen-home');
+  });
+  document.getElementById('btn-refresh-diag').addEventListener('click', renderDiag);
 
   document.getElementById('btn-new-project').addEventListener('click', initNewProjectModal);
   document.getElementById('btn-cancel-project').addEventListener('click', () => {
