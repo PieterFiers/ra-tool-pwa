@@ -766,66 +766,105 @@ async function ensureJSZip() {
   });
 }
 
-// Bouwt de fotozip in het geheugen op, zonder te downloaden. Haalt foto's één
-// voor één uit IndexedDB (terugval op dataUrl voor legacy/niet-gemigreerde data).
-async function buildFotosZipBlob(proj) {
+// Bouwt in het geheugen één zip met de xlsx én de fotomap (indien aanwezig),
+// zonder te downloaden. Haalt foto's één voor één uit IndexedDB (terugval op
+// dataUrl voor legacy/niet-gemigreerde data), niet allemaal tegelijk in het
+// geheugen. onStatus (optioneel) krijgt tussentijdse voortgangstekst.
+async function buildExportZipBlob(proj, onStatus) {
   await ensureJSZip();
   const zip = new JSZip();
-  const folder = zip.folder('fotos');
+
+  const wb = buildWorkbook(proj);
+  const xlsxArray = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+  const xlsxFname = `RA_${proj.naam}_${proj.datum || today()}.xlsx`.replace(/[^a-zA-Z0-9_\-\.]/g, '_');
+  zip.file(xlsxFname, xlsxArray);
 
   const gevarenMetFotos = proj.gevaren || [];
-  for (let i = 0; i < gevarenMetFotos.length; i++) {
-    const g = gevarenMetFotos[i];
-    if (!g.photos || g.photos.length === 0) continue;
-    for (let fi = 0; fi < g.photos.length; fi++) {
-      const p = g.photos[fi];
-      let blob = null;
-      if (p.id) {
-        try { blob = await idbGet(IDB_STORE_PHOTOS, p.id); } catch (e) { blob = null; }
+  const heeftFotos = gevarenMetFotos.some(g => g.photos && g.photos.length > 0);
+  if (heeftFotos) {
+    const folder = zip.folder('fotos');
+    const totaal = gevarenMetFotos.reduce((sum, g) => sum + (g.photos ? g.photos.length : 0), 0);
+    let done = 0;
+    for (let i = 0; i < gevarenMetFotos.length; i++) {
+      const g = gevarenMetFotos[i];
+      if (!g.photos || g.photos.length === 0) continue;
+      for (let fi = 0; fi < g.photos.length; fi++) {
+        const p = g.photos[fi];
+        let blob = null;
+        if (p.id) {
+          try { blob = await idbGet(IDB_STORE_PHOTOS, p.id); } catch (e) { blob = null; }
+        } else if (p.dataUrl) {
+          blob = dataUrlToBlob(p.dataUrl);
+        }
+        done++;
+        if (onStatus) onStatus(`Foto's toevoegen… (${done}/${totaal})`);
         if (!blob) continue; // weesverwijzing, foto ontbreekt
-      } else if (p.dataUrl) {
-        blob = dataUrlToBlob(p.dataUrl);
-      } else {
-        continue;
+        const ext = (p.type || blob.type || '').includes('png') ? 'png' : 'jpg';
+        const nr = String(i + 1).padStart(2, '0');
+        const fnr = String(fi + 1).padStart(2, '0');
+        const locatie = (g.locatie || '').replace(/[^a-zA-Z0-9]/g, '_').slice(0, 20);
+        folder.file(`gevaar_${nr}_foto_${fnr}_${locatie}.${ext}`, blob);
       }
-      const ext = (p.type || blob.type || '').includes('png') ? 'png' : 'jpg';
-      const nr = String(i + 1).padStart(2, '0');
-      const fnr = String(fi + 1).padStart(2, '0');
-      const locatie = (g.locatie || '').replace(/[^a-zA-Z0-9]/g, '_').slice(0, 20);
-      folder.file(`gevaar_${nr}_foto_${fnr}_${locatie}.${ext}`, blob);
     }
   }
 
-  return zip.generateAsync({ type: 'blob' });
+  if (onStatus) onStatus('Bestand samenstellen…');
+  return zip.generateAsync(
+    { type: 'blob', streamFiles: true },
+    onStatus ? (meta) => onStatus(`Bestand samenstellen… (${Math.round(meta.percent)}%)`) : undefined
+  );
 }
 
-function exportProject() {
+// Toont voortgang in de bestaande toast (zonder ongedaan-maken-knop, en zonder
+// automatisch te verbergen zolang de export loopt).
+function updateExportToast(message) {
+  const toast = document.getElementById('app-toast');
+  if (!toast) return;
+  clearTimeout(toast._hideTimer);
+  toast.innerHTML = `<span>${esc(message)}</span>`;
+  toast.classList.add('visible');
+}
+function hideExportToast(delay) {
+  const toast = document.getElementById('app-toast');
+  if (!toast) return;
+  clearTimeout(toast._hideTimer);
+  toast._hideTimer = setTimeout(() => toast.classList.remove('visible'), delay);
+}
+
+// Eén download i.p.v. twee: xlsx en fotomap zitten samen in één zip, één druk
+// op de knop. Lost meteen het probleem op dat iOS Safari een tweede
+// programmatische download buiten de user-activation onderdrukt.
+async function exportProject() {
   const proj = currentProject();
   if (!proj) return;
   if (!window.XLSX) { alert('XLSX library niet geladen'); return; }
 
-  const wb = buildWorkbook(proj);
-  const fname = `RA_${proj.naam}_${proj.datum || today()}.xlsx`.replace(/[^a-zA-Z0-9_\-\.]/g, '_');
-  XLSX.writeFile(wb, fname);
-  proj.lastExportAt = new Date().toISOString();
-  saveProjects();
+  const btn = document.getElementById('btn-export-project');
+  btn.disabled = true;
+  try {
+    updateExportToast('Export starten…');
+    const blob = await buildExportZipBlob(proj, updateExportToast);
 
-  // Als er foto's zijn: ook een zip downloaden
-  const heeftFotos = (proj.gevaren || []).some(g => g.photos && g.photos.length > 0);
-  if (heeftFotos) {
-    setTimeout(() => exportFotos(proj), 500);
+    const fname = `RA_${proj.naam}_${proj.datum || today()}.zip`.replace(/[^a-zA-Z0-9_\-\.]/g, '_');
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fname;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+
+    proj.lastExportAt = new Date().toISOString();
+    saveProjects();
+    updateExportToast('Export voltooid ✓');
+    hideExportToast(2000);
+  } catch (e) {
+    logError(`exportProject() faalde: ${e.message}`);
+    updateExportToast(`Export mislukt: ${e.message}`);
+    hideExportToast(4500);
+    alert(`Export mislukt: ${e.message}\n\nProbeer het opnieuw. Gebruik ondertussen "Kopieer naar PC" om je data veilig te stellen.`);
+  } finally {
+    btn.disabled = false;
   }
-}
-
-// Download alle foto's als zip
-async function exportFotos(proj) {
-  const blob = await buildFotosZipBlob(proj);
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = `Fotos_${proj.naam}_${proj.datum || today()}.zip`.replace(/[^a-zA-Z0-9_\-\.]/g, '_');
-  a.click();
-  setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
 // ─── VERWIJDEREN (PROJECT / GEVAAR) ────────────────────────────────────────────
@@ -1246,17 +1285,12 @@ async function runStresstest() {
   const idbFotoCount = await idbCount(IDB_STORE_PHOTOS);
   log(true, 'Opslaggebruik gemeten', `localStorage ${lsKB} kB · IndexedDB fotoblobs: ${idbFotoCount}`);
 
-  // Stap 4: volledige export in het geheugen genereren, zonder te downloaden
+  // Stap 4: volledige export in het geheugen genereren, zonder te downloaden.
+  // Gebruikt bewust dezelfde buildExportZipBlob() als de echte exportknop.
   try {
     if (!window.XLSX) throw new Error('XLSX niet geladen');
-    const wb = buildWorkbook(testProj);
-    const xlsxArray = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
-    let zipKB = '0.0';
-    if (testProj.gevaren.some(g => g.photos && g.photos.length > 0)) {
-      const zipBlob = await buildFotosZipBlob(testProj);
-      zipKB = fmtKB(zipBlob.size);
-    }
-    log(true, 'Volledige export genereren (xlsx + zip, geen download)', `xlsx ${fmtKB(xlsxArray.byteLength)} kB, zip ${zipKB} kB`);
+    const blob = await buildExportZipBlob(testProj);
+    log(true, 'Volledige export genereren (xlsx + zip, geen download)', `export-zip ${fmtKB(blob.size)} kB`);
   } catch (e) {
     log(false, 'Volledige export genereren (xlsx + zip, geen download)', `fout: ${e.message}`);
   }
