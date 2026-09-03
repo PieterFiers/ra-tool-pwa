@@ -437,6 +437,21 @@
   </div>
 </div>
 
+<!-- Bevestiging voor project/gevaar verwijderen (buiten .screen: moet vanaf elk scherm bovenop kunnen tonen) -->
+<div id="modal-confirm-delete" class="modal-overlay hidden">
+  <div class="modal-sheet">
+    <div class="modal-handle"></div>
+    <h2 class="modal-title" id="confirm-delete-title">Verwijderen?</h2>
+    <p id="confirm-delete-body" style="font-size:14px;color:var(--text-secondary);line-height:1.5;"></p>
+    <div class="modal-actions">
+      <button class="btn-secondary" id="btn-cancel-delete">Annuleren</button>
+      <button class="btn-primary" id="btn-confirm-delete" style="background:var(--red);">Verwijderen</button>
+    </div>
+  </div>
+</div>
+
+<div id="app-toast" class="app-toast"></div>
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="data.js"></script>
 <script src="app.js"></script>

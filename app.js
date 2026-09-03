@@ -2,6 +2,8 @@
 
 const BUILD = 'v6-2026-09-03';
 
+const TRASH_ICON_SVG = '<svg width="15" height="15" viewBox="0 0 16 16" fill="none"><path d="M3 5h10M6.5 5V3.5a1 1 0 011-1h1a1 1 0 011 1V5M4.5 5l.5 8a1 1 0 001 1h4a1 1 0 001-1l.5-8" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
 // ─── State ───────────────────────────────────────────────────────────────────
 let projects = JSON.parse(localStorage.getItem('ra_projects') || '[]');
 let currentProjectId = null;
@@ -221,6 +223,7 @@ function renderHome() {
         <div class="project-name">${esc(p.naam)}</div>
         <div class="project-meta">${esc(p.locatie || '')}${p.locatie && p.datum ? ' · ' : ''}${p.datum || ''} · ${count} gevaar${count !== 1 ? 's' : ''}${high > 0 ? ` · <span style="color:var(--red);font-weight:700">${high} hoog</span>` : ''}</div>
       </div>
+      <button class="card-delete-btn" data-id="${p.id}" title="Project verwijderen">${TRASH_ICON_SVG}</button>
       <svg class="project-arrow" width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M6 3l5 5-5 5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </div>`;
   }).join('');
@@ -228,6 +231,12 @@ function renderHome() {
     card.addEventListener('click', () => {
       currentProjectId = card.dataset.id;
       openProject();
+    });
+  });
+  list.querySelectorAll('.card-delete-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      askDeleteProject(btn.dataset.id);
     });
   });
 }
@@ -283,11 +292,18 @@ function renderGevaren() {
         ${g.soortGevaar ? `<span class="badge-soort">${esc(g.soortGevaar)}</span>` : ''}
         ${r1 !== null ? `<span class="risk-badge ${riskClass(r1)}">R: ${r1}</span>` : ''}
         ${r2 !== null ? `<span class="risk-badge ${riskClass(r2)}" style="opacity:0.8">R2: ${r2}</span>` : ''}
+        <button class="card-delete-btn" style="margin-left:auto;" data-gid="${g.id}" title="Gevaar verwijderen">${TRASH_ICON_SVG}</button>
       </div>
     </div>`;
   }).join('');
   list.querySelectorAll('.gevaar-card').forEach(card => {
     card.addEventListener('click', () => openGevaar(card.dataset.gid));
+  });
+  list.querySelectorAll('.gevaar-card .card-delete-btn').forEach(btn => {
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      askDeleteGevaar(currentProjectId, btn.dataset.gid);
+    });
   });
 }
 
@@ -791,6 +807,8 @@ function exportProject() {
   const wb = buildWorkbook(proj);
   const fname = `RA_${proj.naam}_${proj.datum || today()}.xlsx`.replace(/[^a-zA-Z0-9_\-\.]/g, '_');
   XLSX.writeFile(wb, fname);
+  proj.lastExportAt = new Date().toISOString();
+  saveProjects();
 
   // Als er foto's zijn: ook een zip downloaden
   const heeftFotos = (proj.gevaren || []).some(g => g.photos && g.photos.length > 0);
@@ -808,6 +826,146 @@ async function exportFotos(proj) {
   a.download = `Fotos_${proj.naam}_${proj.datum || today()}.zip`.replace(/[^a-zA-Z0-9_\-\.]/g, '_');
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 2000);
+}
+
+// ─── VERWIJDEREN (PROJECT / GEVAAR) ────────────────────────────────────────────
+// Verwijderen gebeurt met een undo-venster van 6s: de app-state (projects/
+// localStorage) wordt meteen aangepast zodat de UI direct klopt, maar de
+// fotoblobs worden pas na het venster definitief uit IndexedDB gewist. Sluit
+// de gebruiker de tab binnen dat venster, dan blijven die blobs achter als
+// wees — opruimenWeesfotos() ruimt ze bij de volgende start alsnog op.
+let pendingDelete = null; // { type: 'project'|'gevaar', projectId, gevaarId }
+let pendingTrash = null;  // { timeoutId, purgeFn }
+
+function collectFotoIds(gevaren) {
+  const ids = [];
+  (gevaren || []).forEach(g => (g.photos || []).forEach(p => { if (p.id) ids.push(p.id); }));
+  return ids;
+}
+
+async function verwijderFotoBlobs(ids) {
+  for (const id of ids) {
+    await idbDel(IDB_STORE_PHOTOS, id).catch(() => {});
+    if (photoUrlCache.has(id)) {
+      URL.revokeObjectURL(photoUrlCache.get(id));
+      photoUrlCache.delete(id);
+    }
+  }
+}
+
+async function berekenFotoBytes(ids) {
+  let total = 0;
+  for (const id of ids) {
+    try {
+      const blob = await idbGet(IDB_STORE_PHOTOS, id);
+      if (blob) total += blob.size;
+    } catch (e) { /* negeren, is enkel voor de indicatie */ }
+  }
+  return total;
+}
+
+function showToastMetOngedaanMaken(message, onUndo) {
+  const toast = document.getElementById('app-toast');
+  if (!toast) return;
+  toast.innerHTML = `<span>${esc(message)}</span><button type="button" class="app-toast-undo">Ongedaan maken</button>`;
+  toast.querySelector('.app-toast-undo').addEventListener('click', () => {
+    onUndo();
+    toast.classList.remove('visible');
+  });
+  toast.classList.add('visible');
+  clearTimeout(toast._hideTimer);
+  toast._hideTimer = setTimeout(() => toast.classList.remove('visible'), 6000);
+}
+
+function scheduleTrash(restoreFn, purgeFn, message) {
+  if (pendingTrash) {
+    // Vorige pending verwijdering is nog niet definitief: nu wel, anders
+    // raken we het overzicht kwijt over welke undo bij welke actie hoort.
+    clearTimeout(pendingTrash.timeoutId);
+    pendingTrash.purgeFn();
+  }
+  const timeoutId = setTimeout(() => {
+    purgeFn();
+    pendingTrash = null;
+  }, 6000);
+  pendingTrash = { timeoutId, purgeFn };
+  showToastMetOngedaanMaken(message, () => {
+    clearTimeout(pendingTrash.timeoutId);
+    restoreFn();
+    pendingTrash = null;
+  });
+}
+
+async function verwijderProjectMetUndo(projId) {
+  const idx = projects.findIndex(p => p.id === projId);
+  if (idx === -1) return;
+  const proj = projects[idx];
+  const fotoIds = collectFotoIds(proj.gevaren);
+  const freedBytes = await berekenFotoBytes(fotoIds);
+
+  projects.splice(idx, 1);
+  saveProjects();
+  renderHome();
+
+  scheduleTrash(
+    () => { projects.splice(idx, 0, proj); saveProjects(); renderHome(); },
+    () => verwijderFotoBlobs(fotoIds),
+    `"${proj.naam}" verwijderd${freedBytes ? ` — ±${fmtKB(freedBytes)} kB vrijgemaakt` : ''}`
+  );
+}
+
+async function verwijderGevaarMetUndo(projId, gevaarId) {
+  const proj = projects.find(p => p.id === projId);
+  if (!proj) return;
+  const idx = (proj.gevaren || []).findIndex(g => g.id === gevaarId);
+  if (idx === -1) return;
+  const gevaar = proj.gevaren[idx];
+  const fotoIds = collectFotoIds([gevaar]);
+  const freedBytes = await berekenFotoBytes(fotoIds);
+
+  proj.gevaren.splice(idx, 1);
+  saveProjects();
+  renderProjectStats();
+  renderGevaren();
+
+  scheduleTrash(
+    () => { proj.gevaren.splice(idx, 0, gevaar); saveProjects(); renderProjectStats(); renderGevaren(); },
+    () => verwijderFotoBlobs(fotoIds),
+    `Gevaar verwijderd${freedBytes ? ` — ±${fmtKB(freedBytes)} kB vrijgemaakt` : ''}`
+  );
+}
+
+function nietGeexporteerdWaarschuwing(proj) {
+  return proj.lastExportAt
+    ? ''
+    : '<br><span style="color:var(--red);font-weight:600;">Dit project is nog nooit geëxporteerd naar PC.</span>';
+}
+
+function askDeleteProject(projId) {
+  const proj = projects.find(p => p.id === projId);
+  if (!proj) return;
+  const count = (proj.gevaren || []).length;
+  document.getElementById('confirm-delete-title').textContent = 'Project verwijderen?';
+  document.getElementById('confirm-delete-body').innerHTML =
+    `<strong>${esc(proj.naam)}</strong> met ${count} gevaar${count !== 1 ? 'en' : ''} wordt verwijderd.` +
+    nietGeexporteerdWaarschuwing(proj);
+  pendingDelete = { type: 'project', projectId: projId };
+  document.getElementById('modal-confirm-delete').classList.remove('hidden');
+}
+
+function askDeleteGevaar(projId, gevaarId) {
+  const proj = projects.find(p => p.id === projId);
+  if (!proj) return;
+  const gevaar = (proj.gevaren || []).find(g => g.id === gevaarId);
+  if (!gevaar) return;
+  const fotoCount = (gevaar.photos || []).length;
+  document.getElementById('confirm-delete-title').textContent = 'Gevaar verwijderen?';
+  document.getElementById('confirm-delete-body').innerHTML =
+    `<strong>${esc(gevaar.soortGevaar || gevaar.locatie || 'Dit gevaar')}</strong> wordt verwijderd` +
+    `${fotoCount ? ` (incl. ${fotoCount} foto${fotoCount !== 1 ? '\'s' : ''})` : ''}.` +
+    nietGeexporteerdWaarschuwing(proj);
+  pendingDelete = { type: 'gevaar', projectId: projId, gevaarId };
+  document.getElementById('modal-confirm-delete').classList.remove('hidden');
 }
 
 // ─── NEW PROJECT ──────────────────────────────────────────────────────────────
@@ -1204,6 +1362,21 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   document.getElementById('btn-refresh-diag').addEventListener('click', renderDiag);
   document.getElementById('btn-stresstest').addEventListener('click', runStresstest);
+
+  document.getElementById('btn-cancel-delete').addEventListener('click', () => {
+    document.getElementById('modal-confirm-delete').classList.add('hidden');
+    pendingDelete = null;
+  });
+  document.getElementById('btn-confirm-delete').addEventListener('click', async () => {
+    document.getElementById('modal-confirm-delete').classList.add('hidden');
+    if (!pendingDelete) return;
+    if (pendingDelete.type === 'project') {
+      await verwijderProjectMetUndo(pendingDelete.projectId);
+    } else if (pendingDelete.type === 'gevaar') {
+      await verwijderGevaarMetUndo(pendingDelete.projectId, pendingDelete.gevaarId);
+    }
+    pendingDelete = null;
+  });
 
   document.getElementById('btn-new-project').addEventListener('click', initNewProjectModal);
   document.getElementById('btn-cancel-project').addEventListener('click', () => {
