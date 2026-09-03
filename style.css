@@ -810,6 +810,37 @@ html, body {
   border-color: transparent;
 }
 
+/* melding: nieuwe service-worker-versie klaar */
+.update-banner {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 400;
+  background: var(--blue-mid);
+  color: white;
+  padding: calc(var(--safe-top) + 10px) 16px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 13px;
+  font-weight: 600;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+}
+.update-banner button {
+  background: white;
+  color: var(--blue-mid);
+  border: none;
+  border-radius: 99px;
+  padding: 6px 14px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  font-family: inherit;
+  flex-shrink: 0;
+}
+
 /* kaart-verwijderknop (project/gevaar) */
 .card-delete-btn {
   width: 30px;

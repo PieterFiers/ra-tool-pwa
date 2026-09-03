@@ -1491,6 +1491,32 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('input-gallery').addEventListener('change', (e) => handlePhotoInput(e.target.files));
 
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
+    navigator.serviceWorker.register('sw.js').then(reg => {
+      reg.addEventListener('updatefound', () => {
+        const nieuweWorker = reg.installing;
+        if (!nieuweWorker) return;
+        nieuweWorker.addEventListener('statechange', () => {
+          // 'installed' met een bestaande controller = een update, geen eerste install
+          if (nieuweWorker.state === 'installed' && navigator.serviceWorker.controller) {
+            toonUpdateBanner();
+          }
+        });
+      });
+    }).catch(() => {});
   }
 });
+
+// ─── SERVICE WORKER UPDATE-MELDING ─────────────────────────────────────────────
+// sw.js roept skipWaiting() aan zodra een nieuwe versie klaar is, maar de al
+// geladen pagina blijft de oude app.js draaien tot een reload. In plaats van
+// te vertrouwen op het sluiten van alle tabbladen: een banner met expliciete
+// keuze voor de gebruiker, geen automatische reload die veldwerk kan storen.
+function toonUpdateBanner() {
+  if (document.getElementById('update-banner')) return;
+  const banner = document.createElement('div');
+  banner.id = 'update-banner';
+  banner.className = 'update-banner';
+  banner.innerHTML = `<span>Nieuwe versie beschikbaar</span><button type="button">Vernieuwen</button>`;
+  banner.querySelector('button').addEventListener('click', () => window.location.reload());
+  document.body.appendChild(banner);
+}
