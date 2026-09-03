@@ -1,6 +1,6 @@
 // RA Tool PWA v2 — app.js (offline, geen AI)
 
-const BUILD = 'v5-2026-09-03';
+const BUILD = 'v6-2026-09-03';
 
 // ─── State ───────────────────────────────────────────────────────────────────
 let projects = JSON.parse(localStorage.getItem('ra_projects') || '[]');
@@ -12,7 +12,14 @@ let currentPhotos = [];
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function saveProjects() {
-  localStorage.setItem('ra_projects', JSON.stringify(projects));
+  try {
+    localStorage.setItem('ra_projects', JSON.stringify(projects));
+    return true;
+  } catch (e) {
+    logError(`saveProjects() faalde: ${e.message}`);
+    alert('Opslaan mislukt: het opslaggeheugen van dit toestel zit vol. Maak eerst ruimte vrij (verwijder een oud project) of gebruik "Kopieer naar PC" om je huidige data veilig te stellen voor je verdergaat.');
+    return false;
+  }
 }
 function currentProject() {
   return projects.find(p => p.id === currentProjectId);
@@ -54,7 +61,7 @@ function setVal(id, val) {
   if (el && val !== undefined && val !== null) el.value = val;
 }
 
-// ─── INDEXEDDB (foutlog nu, fotoblobs vanaf de opslagfix) ────────────────────
+// ─── INDEXEDDB (fotoblobs + foutlog) ──────────────────────────────────────────
 const IDB_NAME = 'ra-tool-db';
 const IDB_VERSION = 1;
 const IDB_STORE_PHOTOS = 'photos';
@@ -83,6 +90,58 @@ function idbCount(storeName) {
     req.onerror = () => reject(req.error);
   })).catch(() => 0);
 }
+
+function idbPut(storeName, key, value) {
+  return idbOpen().then(db => new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, 'readwrite');
+    tx.objectStore(storeName).put(value, key);
+    tx.oncomplete = () => resolve(true);
+    tx.onerror = () => reject(tx.error);
+  }));
+}
+
+function idbGet(storeName, key) {
+  return idbOpen().then(db => new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, 'readonly');
+    const req = tx.objectStore(storeName).get(key);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  }));
+}
+
+function idbDel(storeName, key) {
+  return idbOpen().then(db => new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, 'readwrite');
+    tx.objectStore(storeName).delete(key);
+    tx.oncomplete = () => resolve(true);
+    tx.onerror = () => reject(tx.error);
+  }));
+}
+
+function idbKeys(storeName) {
+  return idbOpen().then(db => new Promise((resolve, reject) => {
+    const tx = db.transaction(storeName, 'readonly');
+    const req = tx.objectStore(storeName).getAllKeys();
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  })).catch(() => []);
+}
+
+// dataURL ("data:image/jpeg;base64,...") omzetten naar een Blob, voor migratie
+// van bestaande base64-foto's en voor de export vanuit legacy/terugval-data.
+function dataUrlToBlob(dataUrl) {
+  const [meta, base64] = dataUrl.split(',');
+  const mimeMatch = meta.match(/data:(.*?);base64/);
+  const mime = mimeMatch ? mimeMatch[1] : 'image/jpeg';
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new Blob([bytes], { type: mime });
+}
+
+// fotoId -> objectURL. Levensduur is de paginasessie; wordt opgeruimd bij
+// verwijderen van een foto/gevaar/project of bij opruimenWeesfotos().
+const photoUrlCache = new Map();
 
 function trimErrorLog(db) {
   return new Promise((resolve) => {
@@ -250,7 +309,31 @@ function renderFaseStrip(selected) {
 }
 
 // ─── GEVAAR FORM ──────────────────────────────────────────────────────────────
-function openGevaar(gid) {
+// Haalt voor elke foto de blob uit IndexedDB op en maakt er een objectURL van
+// (hergebruikt via photoUrlCache). Foto's die al een dataUrl hebben (legacy of
+// terugval-opslag) blijven ongewijzigd.
+async function loadPhotos(photos) {
+  const result = [];
+  for (const p of photos) {
+    if (p.dataUrl) { result.push(p); continue; }
+    if (photoUrlCache.has(p.id)) { result.push({ ...p, url: photoUrlCache.get(p.id) }); continue; }
+    try {
+      const blob = await idbGet(IDB_STORE_PHOTOS, p.id);
+      if (blob) {
+        const url = URL.createObjectURL(blob);
+        photoUrlCache.set(p.id, url);
+        result.push({ ...p, url });
+      } else {
+        result.push({ ...p, url: null }); // blob ontbreekt (weesverwijzing)
+      }
+    } catch (e) {
+      result.push({ ...p, url: null });
+    }
+  }
+  return result;
+}
+
+async function openGevaar(gid) {
   const proj = currentProject();
   currentStep = 1;
   currentPhotos = [];
@@ -260,7 +343,7 @@ function openGevaar(gid) {
     const g = proj.gevaren.find(x => x.id === gid);
     if (!g) return;
     document.getElementById('nav-gevaar-title').textContent = 'Gevaar bewerken';
-    currentPhotos = g.photos ? [...g.photos] : [];
+    currentPhotos = g.photos ? await loadPhotos(g.photos) : [];
     populateForm(g);
   } else {
     currentGevaarId = null;
@@ -276,7 +359,7 @@ function openGevaar(gid) {
 }
 
 function clearForm() {
-  ['f1-locatie','f1-scenario','f1-gebruikers','f1-verantw','f1-gebruiksfase','f2-consequenties','f2-extra'].forEach(id => {
+  ['f1-locatie','f1-scenario','f1-verantw','f1-gebruiksfase','f2-extra'].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.value = '';
   });
@@ -298,11 +381,9 @@ function clearForm() {
 function populateForm(g) {
   setVal('f1-locatie', g.locatie);
   setVal('f1-scenario', g.scenario);
-  setVal('f1-gebruikers', g.gebruikers);
   setVal('f1-norm', g.norm || 'EN ISO 12100');
   setVal('f1-verantw', g.verantwoordelijke);
   setVal('f1-gebruiksfase', g.gebruiksfase || '');
-  setVal('f2-consequenties', g.consequenties || '');
   setTimeout(() => {
     populateSoortDropdown();
     setVal('f2-soort', g.soortGevaar);
@@ -323,19 +404,26 @@ function populateForm(g) {
   updateRisk();
 }
 
+// Voor opslag blijft van elke foto enkel de metadata over (id/name/type als de
+// blob in IndexedDB staat, anders de dataUrl-terugval) — nooit de transiente
+// objectURL uit currentPhotos, die is enkel geldig binnen deze paginasessie.
+function photosForStorage(photos) {
+  return photos.map(p => p.id
+    ? { id: p.id, name: p.name, type: p.type }
+    : { dataUrl: p.dataUrl, name: p.name });
+}
+
 function getFormData() {
   return {
     id: currentGevaarId || genId(),
     locatie: gv('f1-locatie'),
     scenario: gv('f1-scenario'),
-    gebruikers: gv('f1-gebruikers'),
     gebruiksfase: gv('f1-gebruiksfase'),
     norm: gv('f1-norm') || 'EN ISO 12100',
     verantwoordelijke: gv('f1-verantw'),
     soortGevaar: gv('f2-soort'),
     oorzaak: gv('f2-oorzaak'),
     gevolg: gv('f2-gevolg'),
-    consequenties: gv('f2-consequenties'),
     extra: gv('f2-extra'),
     E: gv('f3-E'),
     B: gv('f3-B'),
@@ -347,7 +435,7 @@ function getFormData() {
     restrisico: gv('f4-restrisico'),
     plr: gv('f4-plr'),
     plrParams: gv('f4-plrparams'),
-    photos: currentPhotos,
+    photos: photosForStorage(currentPhotos),
     updatedAt: new Date().toISOString()
   };
 }
@@ -434,7 +522,6 @@ function updateSummary() {
     ['Soort gevaar', g.soortGevaar],
     ['Oorzaak', g.oorzaak],
     ['Gevolg', g.gevolg],
-    ['Consequenties', g.consequenties],
     ['Risico voor', r1 !== null ? `${r1} – ${riskLabel(r1)}` : '–'],
     ['Risico na', r2 !== null ? `${r2} – ${riskLabel(r2)}` : '–'],
     ['Restrisico', g.restrisico || '–'],
@@ -472,20 +559,27 @@ function goToStep(step) {
 function saveGevaar() {
   const proj = currentProject();
   if (!proj) return;
-  const g = getFormData();
-  if (!proj.gevaren) proj.gevaren = [];
-  if (currentGevaarId) {
-    const idx = proj.gevaren.findIndex(x => x.id === currentGevaarId);
-    if (idx >= 0) proj.gevaren[idx] = g;
-    else proj.gevaren.push(g);
-  } else {
-    proj.gevaren.push(g);
+  try {
+    const g = getFormData();
+    if (!proj.gevaren) proj.gevaren = [];
+    if (currentGevaarId) {
+      const idx = proj.gevaren.findIndex(x => x.id === currentGevaarId);
+      if (idx >= 0) proj.gevaren[idx] = g;
+      else proj.gevaren.push(g);
+    } else {
+      proj.gevaren.push(g);
+    }
+    saveProjects();
+  } catch (e) {
+    logError(`saveGevaar() faalde: ${e.message}`);
+    alert('Er ging iets mis bij het opslaan van dit gevaar. Gebruik "Kopieer naar PC" om je huidige data veilig te stellen en probeer het opnieuw.');
+  } finally {
+    // Ongeacht wat hierboven misging: altijd navigeren, nooit stil blijven hangen.
+    renderProjectStats();
+    renderGevaren();
+    showScreen('screen-project');
+    document.getElementById('screen-gevaar').classList.remove('slide-out');
   }
-  saveProjects();
-  renderProjectStats();
-  renderGevaren();
-  showScreen('screen-project');
-  document.getElementById('screen-gevaar').classList.remove('slide-out');
 }
 
 // ─── PHOTOS ───────────────────────────────────────────────────────────────────
@@ -501,14 +595,22 @@ function renderPhotos() {
   if (placeholder) placeholder.style.display = 'none';
   grid.innerHTML = currentPhotos.map((p, i) =>
     `<div class="photo-thumb-wrap">
-      <img src="${p.dataUrl}" alt="foto ${i+1}">
+      <img src="${p.url || p.dataUrl || ''}" alt="foto ${i+1}">
       <button class="photo-thumb-del" data-idx="${i}">×</button>
     </div>`
   ).join('');
   grid.querySelectorAll('.photo-thumb-del').forEach(btn => {
     btn.addEventListener('click', (e) => {
       e.stopPropagation();
-      currentPhotos.splice(parseInt(btn.dataset.idx), 1);
+      const idx = parseInt(btn.dataset.idx);
+      const [removed] = currentPhotos.splice(idx, 1);
+      if (removed && removed.id) {
+        idbDel(IDB_STORE_PHOTOS, removed.id).catch(() => {});
+        if (photoUrlCache.has(removed.id)) {
+          URL.revokeObjectURL(photoUrlCache.get(removed.id));
+          photoUrlCache.delete(removed.id);
+        }
+      }
       renderPhotos();
     });
   });
@@ -530,8 +632,22 @@ function handlePhotoInput(files) {
         }
         canvas.width = w; canvas.height = h;
         canvas.getContext('2d').drawImage(img, 0, 0, w, h);
-        currentPhotos.push({ dataUrl: canvas.toDataURL('image/jpeg', 0.82), name: file.name });
-        renderPhotos();
+
+        canvas.toBlob(async (blob) => {
+          if (!blob) return;
+          const id = genId();
+          try {
+            await idbPut(IDB_STORE_PHOTOS, id, blob);
+            const url = URL.createObjectURL(blob);
+            photoUrlCache.set(id, url);
+            currentPhotos.push({ id, name: file.name, type: blob.type, url });
+          } catch (err) {
+            // IndexedDB niet beschikbaar: terugval op base64 in localStorage
+            logError(`handlePhotoInput() IDB-schrijf faalde, terugval op base64: ${err.message}`);
+            currentPhotos.push({ dataUrl: canvas.toDataURL('image/jpeg', 0.82), name: file.name });
+          }
+          renderPhotos();
+        }, 'image/jpeg', 0.82);
       };
       img.src = e.target.result;
     };
@@ -634,24 +750,35 @@ async function ensureJSZip() {
   });
 }
 
-// Bouwt de fotozip in het geheugen op, zonder te downloaden
+// Bouwt de fotozip in het geheugen op, zonder te downloaden. Haalt foto's één
+// voor één uit IndexedDB (terugval op dataUrl voor legacy/niet-gemigreerde data).
 async function buildFotosZipBlob(proj) {
   await ensureJSZip();
   const zip = new JSZip();
   const folder = zip.folder('fotos');
 
-  (proj.gevaren || []).forEach((g, i) => {
-    if (!g.photos || g.photos.length === 0) return;
-    g.photos.forEach((p, fi) => {
-      // dataUrl = "data:image/jpeg;base64,XXXX..."
-      const base64 = p.dataUrl.split(',')[1];
-      const ext = p.dataUrl.includes('png') ? 'png' : 'jpg';
+  const gevarenMetFotos = proj.gevaren || [];
+  for (let i = 0; i < gevarenMetFotos.length; i++) {
+    const g = gevarenMetFotos[i];
+    if (!g.photos || g.photos.length === 0) continue;
+    for (let fi = 0; fi < g.photos.length; fi++) {
+      const p = g.photos[fi];
+      let blob = null;
+      if (p.id) {
+        try { blob = await idbGet(IDB_STORE_PHOTOS, p.id); } catch (e) { blob = null; }
+        if (!blob) continue; // weesverwijzing, foto ontbreekt
+      } else if (p.dataUrl) {
+        blob = dataUrlToBlob(p.dataUrl);
+      } else {
+        continue;
+      }
+      const ext = (p.type || blob.type || '').includes('png') ? 'png' : 'jpg';
       const nr = String(i + 1).padStart(2, '0');
       const fnr = String(fi + 1).padStart(2, '0');
       const locatie = (g.locatie || '').replace(/[^a-zA-Z0-9]/g, '_').slice(0, 20);
-      folder.file(`gevaar_${nr}_foto_${fnr}_${locatie}.${ext}`, base64, { base64: true });
-    });
-  });
+      folder.file(`gevaar_${nr}_foto_${fnr}_${locatie}.${ext}`, blob);
+    }
+  }
 
   return zip.generateAsync({ type: 'blob' });
 }
@@ -825,10 +952,11 @@ async function renderDiag() {
 }
 
 // ─── ZELFTEST (STRESSTEST OPSLAG) ─────────────────────────────────────────────
-// Reproduceert het opslagprobleem met synthetische data, onafhankelijk van of
-// saveProjects() al veilig is: de test gebruikt een eigen safe-save zodat een
-// QuotaExceededError de test niet zelf laat crashen, wat precies het defect is
-// dat hij moet aantonen.
+// Gebruikt bewust een eigen safe-save in plaats van saveProjects(): die laatste
+// toont bij falen een alert(), wat de test bij 30 iteraties zou laten
+// vasthangen op een popup. De test schrijft foto's via dezelfde IndexedDB-pad
+// als handlePhotoInput(), zodat hij ook na de opslagfix nog echt aantoont of
+// localStorage klein blijft — niet enkel of de test zelf niet crasht.
 const ZELFTEST_NAAM = '__ZELFTEST__';
 const ZELFTEST_AANTAL_GEVAREN = 30;
 const ZELFTEST_FOTOS_PER_GEVAAR = 2;
@@ -917,7 +1045,16 @@ async function runStresstest() {
     for (let i = 0; i < ZELFTEST_AANTAL_GEVAREN; i++) {
       const photos = [];
       for (let f = 0; f < ZELFTEST_FOTOS_PER_GEVAAR; f++) {
-        photos.push({ dataUrl: genereerRuisFoto(), name: `zelftest_${i + 1}_${f + 1}.jpg` });
+        const dataUrl = genereerRuisFoto();
+        const naam = `zelftest_${i + 1}_${f + 1}.jpg`;
+        try {
+          const blob = dataUrlToBlob(dataUrl);
+          const id = genId();
+          await idbPut(IDB_STORE_PHOTOS, id, blob);
+          photos.push({ id, name: naam, type: blob.type });
+        } catch (e) {
+          photos.push({ dataUrl, name: naam }); // terugval als IndexedDB faalt
+        }
       }
       testProj.gevaren.push({
         id: genId(),
@@ -966,11 +1103,29 @@ async function runStresstest() {
     log(false, 'Volledige export genereren (xlsx + zip, geen download)', `fout: ${e.message}`);
   }
 
-  // Stap 5: testproject en resten opruimen, opruiming verifiëren
+  // Stap 5: testproject en fotoblobs opruimen, opruiming verifiëren
+  const fotoIdsInTest = [];
+  testProj.gevaren.forEach(g => (g.photos || []).forEach(p => { if (p.id) fotoIdsInTest.push(p.id); }));
+
   projects = projects.filter(p => p.id !== testProj.id);
   safeSaveProjectsForTest();
+
+  for (const fid of fotoIdsInTest) {
+    await idbDel(IDB_STORE_PHOTOS, fid).catch(() => {});
+    if (photoUrlCache.has(fid)) {
+      URL.revokeObjectURL(photoUrlCache.get(fid));
+      photoUrlCache.delete(fid);
+    }
+  }
   const nogAanwezig = !!leesProjectTerug(testProj.id);
-  log(!nogAanwezig, 'Testproject opruimen', nogAanwezig ? 'testproject staat nog in localStorage' : 'volledig verwijderd uit localStorage');
+  let restBlobs = 0;
+  for (const fid of fotoIdsInTest) {
+    const stillThere = await idbGet(IDB_STORE_PHOTOS, fid).catch(() => null);
+    if (stillThere) restBlobs++;
+  }
+  const opgeruimd = !nogAanwezig && restBlobs === 0;
+  log(opgeruimd, 'Testproject en fotoblobs opruimen',
+    opgeruimd ? `volledig verwijderd (localStorage + ${fotoIdsInTest.length} fotoblobs uit IndexedDB)` : `nog aanwezig: project=${nogAanwezig}, fotoblobs=${restBlobs}/${fotoIdsInTest.length}`);
 
   renderHome();
 
@@ -987,8 +1142,56 @@ async function runStresstest() {
   btn.textContent = 'Stresstest opslag';
 }
 
+// ─── MIGRATIE EN OPRUIMING ─────────────────────────────────────────────────────
+// Zet bestaande base64-foto's (van vóór de opslagfix) om naar blobs in
+// IndexedDB en vervangt ze in localStorage door lichte metadata. Moet vóór
+// opruimenWeesfotos() draaien, anders worden net-gemigreerde blobs die nog
+// niet aan een gevaar hangen per ongeluk als wees gezien.
+async function migreerFotos() {
+  let gewijzigd = false;
+  for (const proj of projects) {
+    for (const g of (proj.gevaren || [])) {
+      if (!g.photos || g.photos.length === 0) continue;
+      for (let i = 0; i < g.photos.length; i++) {
+        const p = g.photos[i];
+        if (p.id || !p.dataUrl) continue; // al gemigreerd, of geen data
+        try {
+          const blob = dataUrlToBlob(p.dataUrl);
+          const id = genId();
+          await idbPut(IDB_STORE_PHOTOS, id, blob);
+          g.photos[i] = { id, name: p.name, type: blob.type };
+          gewijzigd = true;
+        } catch (e) {
+          logError(`migreerFotos() faalde voor gevaar ${g.id}: ${e.message}`);
+        }
+      }
+    }
+  }
+  if (gewijzigd) saveProjects();
+}
+
+// Verwijdert fotoblobs uit IndexedDB waar geen enkel gevaar meer naar verwijst.
+async function opruimenWeesfotos() {
+  const referenced = new Set();
+  projects.forEach(proj => (proj.gevaren || []).forEach(g => (g.photos || []).forEach(p => {
+    if (p.id) referenced.add(p.id);
+  })));
+  const keys = await idbKeys(IDB_STORE_PHOTOS);
+  for (const key of keys) {
+    if (!referenced.has(key)) {
+      await idbDel(IDB_STORE_PHOTOS, key).catch(() => {});
+    }
+  }
+}
+
 // ─── INIT ─────────────────────────────────────────────────────────────────────
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
+  await migreerFotos();
+  await opruimenWeesfotos();
+  if (navigator.storage && navigator.storage.persist) {
+    navigator.storage.persist().catch(() => {});
+  }
+
   renderHome();
   document.getElementById('btn-open-diag').textContent = BUILD;
 
