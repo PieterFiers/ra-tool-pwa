@@ -540,11 +540,7 @@ function handlePhotoInput(files) {
 }
 
 // ─── EXPORT ────────────────────────────────────────────────────────────────────
-function exportProject() {
-  const proj = currentProject();
-  if (!proj) return;
-  if (!window.XLSX) { alert('XLSX library niet geladen'); return; }
-
+function buildWorkbook(proj) {
   const wb = XLSX.utils.book_new();
 
   const wsVB = XLSX.utils.aoa_to_sheet([
@@ -624,30 +620,23 @@ function exportProject() {
     {wch:18},{wch:28},{wch:12},{wch:18},{wch:30}
   ];
   XLSX.utils.book_append_sheet(wb, wsRA, `RA ${proj.naam}`.slice(0, 31));
-
-  const fname = `RA_${proj.naam}_${proj.datum || today()}.xlsx`.replace(/[^a-zA-Z0-9_\-\.]/g, '_');
-  XLSX.writeFile(wb, fname);
-
-  // Als er foto's zijn: ook een zip downloaden
-  const heeftFotos = (proj.gevaren || []).some(g => g.photos && g.photos.length > 0);
-  if (heeftFotos) {
-    setTimeout(() => exportFotos(proj), 500);
-  }
+  return wb;
 }
 
-// Download alle foto's als zip
-async function exportFotos(proj) {
-  if (!window.JSZip) {
-    // Laad JSZip on-demand
-    await new Promise((resolve, reject) => {
-      const s = document.createElement('script');
-      s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
-      s.onload = resolve;
-      s.onerror = reject;
-      document.head.appendChild(s);
-    });
-  }
+async function ensureJSZip() {
+  if (window.JSZip) return;
+  await new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js';
+    s.onload = resolve;
+    s.onerror = reject;
+    document.head.appendChild(s);
+  });
+}
 
+// Bouwt de fotozip in het geheugen op, zonder te downloaden
+async function buildFotosZipBlob(proj) {
+  await ensureJSZip();
   const zip = new JSZip();
   const folder = zip.folder('fotos');
 
@@ -664,7 +653,28 @@ async function exportFotos(proj) {
     });
   });
 
-  const blob = await zip.generateAsync({ type: 'blob' });
+  return zip.generateAsync({ type: 'blob' });
+}
+
+function exportProject() {
+  const proj = currentProject();
+  if (!proj) return;
+  if (!window.XLSX) { alert('XLSX library niet geladen'); return; }
+
+  const wb = buildWorkbook(proj);
+  const fname = `RA_${proj.naam}_${proj.datum || today()}.xlsx`.replace(/[^a-zA-Z0-9_\-\.]/g, '_');
+  XLSX.writeFile(wb, fname);
+
+  // Als er foto's zijn: ook een zip downloaden
+  const heeftFotos = (proj.gevaren || []).some(g => g.photos && g.photos.length > 0);
+  if (heeftFotos) {
+    setTimeout(() => exportFotos(proj), 500);
+  }
+}
+
+// Download alle foto's als zip
+async function exportFotos(proj) {
+  const blob = await buildFotosZipBlob(proj);
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
@@ -748,7 +758,7 @@ function localStorageUsageBytes() {
 }
 
 async function renderDiag() {
-  const el = document.getElementById('diag-content');
+  const el = document.getElementById('diag-stats');
   el.innerHTML = `<div class="summary-card"><div class="summary-title">Bezig met laden…</div></div>`;
 
   let cacheNaam = 'caches API niet beschikbaar';
@@ -814,6 +824,169 @@ async function renderDiag() {
   `;
 }
 
+// ─── ZELFTEST (STRESSTEST OPSLAG) ─────────────────────────────────────────────
+// Reproduceert het opslagprobleem met synthetische data, onafhankelijk van of
+// saveProjects() al veilig is: de test gebruikt een eigen safe-save zodat een
+// QuotaExceededError de test niet zelf laat crashen, wat precies het defect is
+// dat hij moet aantonen.
+const ZELFTEST_NAAM = '__ZELFTEST__';
+const ZELFTEST_AANTAL_GEVAREN = 30;
+const ZELFTEST_FOTOS_PER_GEVAAR = 2;
+
+function genereerRuisFoto() {
+  const canvas = document.createElement('canvas');
+  canvas.width = 900;
+  canvas.height = 900;
+  const ctx = canvas.getContext('2d');
+  const imgData = ctx.createImageData(canvas.width, canvas.height);
+  for (let i = 0; i < imgData.data.length; i += 4) {
+    imgData.data[i] = Math.random() * 256;
+    imgData.data[i + 1] = Math.random() * 256;
+    imgData.data[i + 2] = Math.random() * 256;
+    imgData.data[i + 3] = 255;
+  }
+  ctx.putImageData(imgData, 0, 0);
+  let quality = 0.5;
+  let dataUrl = canvas.toDataURL('image/jpeg', quality);
+  let tries = 0;
+  while (dataUrl.length > 460 * 1024 && quality > 0.15 && tries < 6) {
+    quality -= 0.08;
+    dataUrl = canvas.toDataURL('image/jpeg', quality);
+    tries++;
+  }
+  return dataUrl;
+}
+
+function safeSaveProjectsForTest() {
+  try {
+    localStorage.setItem('ra_projects', JSON.stringify(projects));
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function leesProjectTerug(id) {
+  try {
+    const raw = JSON.parse(localStorage.getItem('ra_projects') || '[]');
+    return raw.find(p => p.id === id) || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function stresstestStapLog(container, ok, label, detail) {
+  const row = document.createElement('div');
+  row.className = 'summary-row';
+  row.innerHTML = `<span class="summary-key">${ok ? '✓' : '✗'} ${esc(label)}</span><span class="summary-val" style="color:${ok ? 'var(--green)' : 'var(--red)'}">${esc(detail || '')}</span>`;
+  container.appendChild(row);
+  return ok;
+}
+
+async function runStresstest() {
+  const out = document.getElementById('stresstest-output');
+  const btn = document.getElementById('btn-stresstest');
+  out.innerHTML = '';
+  btn.disabled = true;
+  btn.textContent = 'Bezig…';
+
+  let allOk = true;
+  const log = (ok, label, detail) => { if (!stresstestStapLog(out, ok, label, detail)) allOk = false; };
+
+  // Eventueel restant van een vorige afgebroken test opruimen
+  projects = projects.filter(p => p.naam !== ZELFTEST_NAAM);
+  safeSaveProjectsForTest();
+
+  // Stap 1: testproject aanmaken
+  const testProj = {
+    id: genId(),
+    naam: ZELFTEST_NAAM,
+    locatie: 'Zelftest',
+    klant: '',
+    datum: today(),
+    gevaren: [],
+    createdAt: new Date().toISOString()
+  };
+  projects.push(testProj);
+  const stap1Ok = safeSaveProjectsForTest();
+  log(stap1Ok, 'Testproject aanmaken', stap1Ok ? `id ${testProj.id}` : 'localStorage.setItem() faalde');
+
+  // Stap 2: 30 gevaren met elk 2 foto's toevoegen, telkens schrijven én terug inlezen
+  let aantalGeverifieerd = 0;
+  if (stap1Ok) {
+    for (let i = 0; i < ZELFTEST_AANTAL_GEVAREN; i++) {
+      const photos = [];
+      for (let f = 0; f < ZELFTEST_FOTOS_PER_GEVAAR; f++) {
+        photos.push({ dataUrl: genereerRuisFoto(), name: `zelftest_${i + 1}_${f + 1}.jpg` });
+      }
+      testProj.gevaren.push({
+        id: genId(),
+        locatie: `Zelftestlocatie ${i + 1}`,
+        scenario: 'Synthetisch gegenereerd door de stresstest',
+        soortGevaar: 'Zelftest',
+        oorzaak: 'Synthetisch',
+        gevolg: 'Synthetisch',
+        E: 7, B: 3, W: 0.2, E2: 1, B2: 1, W2: 0.033,
+        photos,
+        updatedAt: new Date().toISOString()
+      });
+      const geschreven = safeSaveProjectsForTest();
+      const teruggelezen = geschreven ? leesProjectTerug(testProj.id) : null;
+      const geverifieerd = !!teruggelezen && teruggelezen.gevaren.length === testProj.gevaren.length;
+      if (geverifieerd) {
+        aantalGeverifieerd++;
+      } else {
+        log(false, `Gevaar ${i + 1}/${ZELFTEST_AANTAL_GEVAREN} opslaan en terug inlezen`,
+          `stopt bij gevaar ${i + 1}${geschreven ? ' (schrijven lukte, terug inlezen kwam niet overeen)' : ' (setItem faalde)'}`);
+        break;
+      }
+    }
+    if (aantalGeverifieerd === ZELFTEST_AANTAL_GEVAREN) {
+      log(true, `${ZELFTEST_AANTAL_GEVAREN} gevaren opslaan en terug inlezen`, `alle ${ZELFTEST_AANTAL_GEVAREN} met foto's kloppen na herinlezen`);
+    }
+  }
+
+  // Stap 3: opslaggebruik meten
+  const lsKB = fmtKB(localStorageUsageBytes());
+  const idbFotoCount = await idbCount(IDB_STORE_PHOTOS);
+  log(true, 'Opslaggebruik gemeten', `localStorage ${lsKB} kB · IndexedDB fotoblobs: ${idbFotoCount}`);
+
+  // Stap 4: volledige export in het geheugen genereren, zonder te downloaden
+  try {
+    if (!window.XLSX) throw new Error('XLSX niet geladen');
+    const wb = buildWorkbook(testProj);
+    const xlsxArray = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
+    let zipKB = '0.0';
+    if (testProj.gevaren.some(g => g.photos && g.photos.length > 0)) {
+      const zipBlob = await buildFotosZipBlob(testProj);
+      zipKB = fmtKB(zipBlob.size);
+    }
+    log(true, 'Volledige export genereren (xlsx + zip, geen download)', `xlsx ${fmtKB(xlsxArray.byteLength)} kB, zip ${zipKB} kB`);
+  } catch (e) {
+    log(false, 'Volledige export genereren (xlsx + zip, geen download)', `fout: ${e.message}`);
+  }
+
+  // Stap 5: testproject en resten opruimen, opruiming verifiëren
+  projects = projects.filter(p => p.id !== testProj.id);
+  safeSaveProjectsForTest();
+  const nogAanwezig = !!leesProjectTerug(testProj.id);
+  log(!nogAanwezig, 'Testproject opruimen', nogAanwezig ? 'testproject staat nog in localStorage' : 'volledig verwijderd uit localStorage');
+
+  renderHome();
+
+  const eindLabel = allOk ? 'ALLE STAPPEN GESLAAGD' : 'ÉÉN OF MEER STAPPEN GEFAALD';
+  const eindRow = document.createElement('div');
+  eindRow.className = 'summary-row';
+  eindRow.style.borderTop = '1px solid var(--border)';
+  eindRow.style.marginTop = '4px';
+  eindRow.style.paddingTop = '10px';
+  eindRow.innerHTML = `<span class="summary-key" style="font-weight:700;color:${allOk ? 'var(--green)' : 'var(--red)'}">${eindLabel}</span>`;
+  out.appendChild(eindRow);
+
+  btn.disabled = false;
+  btn.textContent = 'Stresstest opslag';
+}
+
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   renderHome();
@@ -827,6 +1000,7 @@ document.addEventListener('DOMContentLoaded', () => {
     showScreen('screen-home');
   });
   document.getElementById('btn-refresh-diag').addEventListener('click', renderDiag);
+  document.getElementById('btn-stresstest').addEventListener('click', runStresstest);
 
   document.getElementById('btn-new-project').addEventListener('click', initNewProjectModal);
   document.getElementById('btn-cancel-project').addEventListener('click', () => {

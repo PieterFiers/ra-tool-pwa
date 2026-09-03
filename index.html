@@ -434,7 +434,15 @@
       <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><path d="M15 9a6 6 0 10-1.76 4.24M15 9V4m0 5h-5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
     </button>
   </div>
-  <div class="home-content" id="diag-content"></div>
+  <div class="home-content" id="diag-content">
+    <div id="diag-stats"></div>
+    <div class="summary-card" style="margin-top:12px;">
+      <div class="summary-title">Zelftest</div>
+      <p style="font-size:12px;color:var(--text-secondary);margin-bottom:10px;">Simuleert 30 gevaren met foto's in een tijdelijk testproject om het opslagprobleem te reproduceren, zonder echte veldgegevens te gebruiken. Ruimt zichzelf op na afloop.</p>
+      <button class="btn-primary" id="btn-stresstest" style="width:100%;padding:13px;">Stresstest opslag</button>
+      <div id="stresstest-output" style="margin-top:8px;"></div>
+    </div>
+  </div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
